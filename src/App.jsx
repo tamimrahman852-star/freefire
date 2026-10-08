@@ -8,9 +8,8 @@ import {
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
-export const SUPABASE_SQL_SCHEMA = `-- ========================================================
+export const SUPABASE_SQL_SCHEMA = `
 -- OFFICIAL BOOYAH ARENA ESPORTS - SUPABASE DATABASE SCHEMA
--- ========================================================
 
 -- 1. Enable UUID Extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
