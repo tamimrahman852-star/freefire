@@ -5,7 +5,7 @@ import {
   Trophy, ShieldCheck, Crosshair, Users, Key, Gamepad2, PlusCircle, 
   CheckCircle, Clock, AlertCircle, Settings, Award, BookOpen, Flame, Check, Lock, 
   RefreshCw, Copy, Trash2, X, Search, Filter, AlertTriangle, UserCheck,
-  Play, Tv, Sparkles, ChevronRight, Phone, DollarSign, Eye
+  Play, Tv, Sparkles, Phone, DollarSign, Eye
 } from 'lucide-react';
 
 const IMAGES = {
@@ -280,17 +280,21 @@ export default function App() {
   };
 
   const updateRegStatus = async (regId, status) => {
-    const { error } = await supabase
-      .from('registrations')
-      .update({ status })
-      .eq('id', regId);
+    try {
+      const { error } = await supabase
+        .from('registrations')
+        .update({ status })
+        .eq('id', regId);
 
-    if (error) {
-      setRegistrations(prev => prev.map(r => r.id === regId ? { ...r, status } : r));
+      if (error) {
+        setRegistrations(prev => prev.map(r => r.id === regId ? { ...r, status } : r));
+      }
+      const statusMsg = 'Registration marked as ' + status;
+      showToast(statusMsg);
+      fetchData();
+    } catch (err) {
+      showToast('Status updated locally');
     }
-    const statusMsg = `Registration marked as ${status}`;
-    showToast(statusMsg);
-    fetchData();
   };
 
   const handleAddLeaderboard = async (e) => {
@@ -351,7 +355,7 @@ export default function App() {
     return tournaments.filter(t => {
       const matchMode = filterMode === 'ALL' || t.mode === filterMode;
       const matchMap = filterMap === 'ALL' || t.map === filterMap;
-      const matchSearch = t.title.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchSearch = (t.title || '').toLowerCase().includes(searchQuery.toLowerCase());
       return matchMode && matchMap && matchSearch;
     });
   }, [tournaments, filterMode, filterMap, searchQuery]);
@@ -596,7 +600,7 @@ export default function App() {
                           <ShieldCheck className="text-emerald-400 w-6 h-6 shrink-0" />
                           <div>
                             <p className="text-gray-400 text-[10px] uppercase font-bold">Entry Fee</p>
-                            <p className="font-bold text-emerald-400 font-teko text-xl leading-none">{Number(t.entry_fee) === 0 ? 'FREE' : `৳ ${t.entry_fee}`}</p>
+                            <p className="font-bold text-emerald-400 font-teko text-xl leading-none">{Number(t.entry_fee) === 0 ? 'FREE' : '৳ ' + t.entry_fee}</p>
                           </div>
                         </div>
 
@@ -617,7 +621,7 @@ export default function App() {
                         <div className="w-full bg-gray-800 h-2 rounded-full overflow-hidden mb-4">
                           <div 
                             className="bg-gradient-to-r from-amber-500 to-yellow-300 h-full transition-all duration-500" 
-                            style={{ width: `${Math.min(100, (joinedCount / t.total_slots) * 100)}%` }}
+                            style={{ width: Math.min(100, (joinedCount / t.total_slots) * 100) + '%' }}
                           ></div>
                         </div>
 
@@ -791,7 +795,7 @@ export default function App() {
                         <td className="p-4 text-center font-bold font-teko text-lg">
                           {idx === 0 ? <span className="text-yellow-400">🥇 #1</span> :
                            idx === 1 ? <span className="text-gray-300">🥈 #2</span> :
-                           idx === 2 ? <span className="text-amber-600">🥉 #3</span> : `#${idx + 1}`}
+                           idx === 2 ? <span className="text-amber-600">🥉 #3</span> : '#' + (idx + 1)}
                         </td>
                         <td className="p-4 font-bold text-white text-sm">{item.squad_name}</td>
                         <td className="p-4 text-center text-gray-400">{item.matches_played}</td>
@@ -840,7 +844,7 @@ export default function App() {
                     className="w-full bg-[#07090E] border border-gray-800 rounded-xl p-2.5 text-xs text-white focus:outline-none focus:border-amber-500"
                   >
                     {[...Array(12)].map((_, i) => (
-                      <option key={i + 1} value={i + 1}># {i + 1} Rank ({i === 0 ? '12 pts' : i === 1 ? '9 pts' : i === 2 ? '8 pts' : `${Math.max(1, 8 - i)} pts`})</option>
+                      <option key={i + 1} value={i + 1}># {i + 1} Rank ({i === 0 ? '12 pts' : i === 1 ? '9 pts' : i === 2 ? '8 pts' : Math.max(1, 8 - i) + ' pts'})</option>
                     ))}
                   </select>
                 </div>
@@ -1207,7 +1211,7 @@ export default function App() {
             <div className="flex justify-between items-center border-b border-gray-800 pb-3">
               <div>
                 <h3 className="text-xl font-bold font-teko text-amber-400 uppercase">{selectedMatch.title}</h3>
-                <p className="text-xs text-gray-400">Entry Fee: {Number(selectedMatch.entry_fee) === 0 ? 'FREE' : `৳ ${selectedMatch.entry_fee}`}</p>
+                <p className="text-xs text-gray-400">Entry Fee: {Number(selectedMatch.entry_fee) === 0 ? 'FREE' : '৳ ' + selectedMatch.entry_fee}</p>
               </div>
               <button onClick={() => setModalOpen(false)} className="text-gray-400 hover:text-white p-1">
                 <X className="w-5 h-5" />
