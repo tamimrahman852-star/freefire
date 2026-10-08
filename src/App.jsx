@@ -376,16 +376,15 @@ export default function App() {
     <div className="min-h-screen bg-[#07090E] text-gray-100 pb-24 md:pb-12 font-sans selection:bg-amber-500 selection:text-black">
       
       {/* 🔔 TOAST NOTIFICATION */}
-      {toast && (
-        <div className={`fixed top-5 right-5 z-50 px-5 py-3 rounded-xl border font-bold text-sm shadow-2xl flex items-center gap-3 backdrop-blur-md animate-bounce ${
-          toast.type === 'error' ? 'bg-red-950/90 border-red-500 text-red-300' : 
-          toast.type === 'info' ? 'bg-blue-950/90 border-blue-500 text-blue-300' :
-          'bg-emerald-950/90 border-emerald-500 text-emerald-300'
-        }`}>
-          <AlertCircle className="w-5 h-5 shrink-0" />
-          {toast.message}
-        </div>
-      )}
+{toast && (
+  <div className={`fixed top-5 right-5 z-50 px-5 py-3 rounded-xl border font-bold text-sm shadow-2xl flex items-center gap-3 backdrop-blur-md animate-bounce ${
+    toast.type === 'error' ? 'bg-red-950/90 border-red-500 text-red-300' : 
+    toast.type === 'info' ? 'bg-blue-950/90 border-blue-500 text-blue-300' : 'bg-emerald-950/90 border-emerald-500 text-emerald-300'
+  }`}>
+    {toast.message}
+  </div>
+)}
+  
 
       {/* 📢 ANNOUNCEMENT TICKER */}
       {notices.length > 0 && (
