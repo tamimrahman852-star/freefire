@@ -8,7 +8,6 @@ import {
   Play, Tv, Sparkles, ChevronRight, Phone, DollarSign, Eye
 } from 'lucide-react';
 
-// Fallback visual banners & map assets
 const IMAGES = {
   heroBanner: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?q=80&w=1200&auto=format&fit=crop',
   bermuda: 'https://images.unsplash.com/photo-1511512578047-dfb367046420?q=80&w=600&auto=format&fit=crop',
@@ -18,7 +17,6 @@ const IMAGES = {
   nexterra: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?q=80&w=600&auto=format&fit=crop',
 };
 
-// Initial mock fallback data when DB tables are empty
 const MOCK_TOURNAMENTS = [
   {
     id: 'ff-101',
@@ -103,7 +101,7 @@ export default function App() {
   const [calcKills, setCalcKills] = useState(0);
   const [calcRank, setCalcRank] = useState(1);
 
-  // Squad Registration Form
+  // Squad Registration Form State
   const [regForm, setRegForm] = useState({
     squadName: '',
     leaderIgn: '',
@@ -150,7 +148,6 @@ export default function App() {
     setTimeout(() => setToast(null), 3500);
   };
 
-  // Fetch all live data from Supabase
   const fetchData = async () => {
     setLoading(true);
     try {
@@ -191,7 +188,6 @@ export default function App() {
     }
   };
 
-  // User Registration Handler
   const handleRegister = async (e) => {
     e.preventDefault();
     if (!selectedMatch) return;
@@ -235,7 +231,6 @@ export default function App() {
     }
   };
 
-  // Admin: Create Match
   const handleCreateMatch = async (e) => {
     e.preventDefault();
     let mapImg = IMAGES.bermuda;
@@ -270,7 +265,6 @@ export default function App() {
     fetchData();
   };
 
-  // Admin: Update Room Credentials
   const updateRoomCredentials = async (tId) => {
     const inputs = roomInputs[tId] || {};
     const { error } = await supabase
@@ -285,7 +279,6 @@ export default function App() {
     fetchData();
   };
 
-  // Admin: Update Registration Status
   const updateRegStatus = async (regId, status) => {
     const { error } = await supabase
       .from('registrations')
@@ -295,11 +288,11 @@ export default function App() {
     if (error) {
       setRegistrations(prev => prev.map(r => r.id === regId ? { ...r, status } : r));
     }
-    showToast(`Registration marked as ${status}`);
+    const statusMsg = `Registration marked as ${status}`;
+    showToast(statusMsg);
     fetchData();
   };
 
-  // Admin: Add or Update Leaderboard Entry
   const handleAddLeaderboard = async (e) => {
     e.preventDefault();
     const totalPts = Number(leaderForm.placementPoints) + Number(leaderForm.totalKills);
@@ -321,7 +314,6 @@ export default function App() {
     fetchData();
   };
 
-  // Admin Delete Match
   const handleDeleteMatch = async (tId) => {
     if (!confirm('Are you sure you want to delete this tournament?')) return;
     const { error } = await supabase.from('tournaments').delete().eq('id', tId);
@@ -332,7 +324,6 @@ export default function App() {
     fetchData();
   };
 
-  // Admin Login Handler
   const handleAdminLogin = (e) => {
     e.preventDefault();
     if (adminPinInput === ADMIN_PIN) {
@@ -344,7 +335,6 @@ export default function App() {
     }
   };
 
-  // Admin: Add Notice
   const handleAddNotice = async (e) => {
     e.preventDefault();
     if (!noticeInput.trim()) return;
@@ -357,7 +347,6 @@ export default function App() {
     fetchData();
   };
 
-  // Filtered Tournaments
   const filteredTournaments = useMemo(() => {
     return tournaments.filter(t => {
       const matchMode = filterMode === 'ALL' || t.mode === filterMode;
@@ -367,7 +356,6 @@ export default function App() {
     });
   }, [tournaments, filterMode, filterMap, searchQuery]);
 
-  // Point Calculator Formula (Official Free Fire World Series / Esports System)
   const calcPoints = useMemo(() => {
     const placementPointsMap = { 1: 12, 2: 9, 3: 8, 4: 7, 5: 6, 6: 5, 7: 4, 8: 3, 9: 2, 10: 1 };
     const rankPts = placementPointsMap[calcRank] || 0;
