@@ -2,12 +2,42 @@
 @tailwind components;
 @tailwind utilities;
 
+@import url('https://fonts.googleapis.com/css2?family=Teko:wght@500;600;700&family=Inter:wght@400;600;700;800&display=swap');
+
 body {
-  background-color: #0A0C10;
+  background-color: #07090E;
   color: #F3F4F6;
+  font-family: 'Inter', sans-serif;
+  overflow-x: hidden;
 }
 
-h1, h2, h3, .font-teko {
+.font-teko {
   font-family: 'Teko', sans-serif;
   letter-spacing: 1px;
+}
+
+/* Custom Esports Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #07090E;
+}
+::-webkit-scrollbar-thumb {
+  background: #FFB800;
+  border-radius: 3px;
+}
+
+/* Glassmorphism & Glow Effects */
+.esports-card {
+  background: linear-gradient(135deg, rgba(18, 22, 32, 0.9) 0%, rgba(10, 12, 16, 0.95) 100%);
+  backdrop-filter: blur(10px);
+}
+
+.gold-glow {
+  box-shadow: 0 0 20px rgba(255, 184, 0, 0.15);
+}
+
+.gold-glow-hover:hover {
+  box-shadow: 0 0 25px rgba(255, 184, 0, 0.35);
 }
