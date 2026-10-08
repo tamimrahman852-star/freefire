@@ -1,0 +1,13 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  background-color: #0A0C10;
+  color: #F3F4F6;
+}
+
+h1, h2, h3, .font-teko {
+  font-family: 'Teko', sans-serif;
+  letter-spacing: 1px;
+}
