@@ -1,6 +1,6 @@
 /* =====================================================================
  *  BOOYAH ARENA — Official Free Fire Esports & Tournament Platform
- *  Drop-in replacement for  src/App.jsx
+ *  Drop-in replacement for src/App.jsx
  *  React 18 + Tailwind CSS 3 + lucide-react + Supabase
  *
  *  Requires:
@@ -1421,128 +1421,204 @@ function ResultsAdmin({ tournaments, regs, points, call, refresh }) {
   const toast = useToast();
   const eligible = tournaments.filter((t) => t.status !== 'CANCELLED');
   const [tid, setTid] = useState('');
-  const [rows, setRows] = useState({});
-  const [had, setHad] = useState(false);
+  const [rows, setRows] = useState({}); // squad_name -> { placement, kills }
   const [busy, setBusy] = useState(false);
-  const [ask, setAsk] = useState(false);
-  const t = eligible.find((x) => x.id === tid);
-  const squads = useMemo(() => regs.filter((r) => r.tournament_id === tid && r.status === 'APPROVED').sort((a, b) => a.squad_name.localeCompare(b.squad_name)), [regs, tid]);
+  const [fetching, setFetching] = useState(false);
+
+  const selectedMatch = eligible.find((x) => x.id === tid);
+  const approvedSquads = useMemo(() => {
+    if (!tid) return [];
+    return regs.filter((r) => r.tournament_id === tid && r.status === 'APPROVED')
+      .sort((a, b) => a.squad_name.localeCompare(b.squad_name));
+  }, [regs, tid]);
 
   useEffect(() => {
-    if (!tid) return undefined;
-    let alive = true;
-    setRows({}); setHad(false);
-    supabase.from('match_results').select('*').eq('tournament_id', tid).then(({ data }) => {
-      if (!alive) return;
-      const m = {};
-      (data || []).forEach((r) => { if (r.registration_id) m[r.registration_id] = { placement: String(r.placement), kills: String(r.kills) }; });
-      setRows(m); setHad((data || []).length > 0);
-    });
-    return () => { alive = false; };
-  }, [tid]);
+    if (!tid) { setRows({}); return; }
+    let mounted = true;
+    setFetching(true);
+    (async () => {
+      try {
+        const { data, error } = await supabase.from('match_results').select('*').eq('tournament_id', tid);
+        if (!mounted) return;
+        if (!error && data && data.length > 0) {
+          const map = {};
+          data.forEach((r) => { map[r.squad_name] = { placement: r.placement, kills: r.kills }; });
+          setRows(map);
+        } else {
+          // Initialize empty for all approved squads
+          const map = {};
+          approvedSquads.forEach((s) => { map[s.squad_name] = { placement: 0, kills: 0 }; });
+          setRows(map);
+        }
+      } catch (e) {
+        console.error('Failed to load match results', e);
+      } finally {
+        if (mounted) setFetching(false);
+      }
+    })();
+    return () => { mounted = false; };
+  }, [tid, approvedSquads]);
 
-  const setCell = (id, k, v) => setRows((s) => ({ ...s, [id]: { ...(s[id] || { placement: '', kills: '' }), [k]: v.replace(/\D/g, '') } }));
-  const entries = squads.filter((s) => rows[s.id]?.placement).map((s) => ({ s, placement: Number(rows[s.id].placement), kills: Number(rows[s.id].kills || 0) }));
-  const winner = entries.find((e) => e.placement === 1);
-
-  const validate = () => {
-    if (!entries.length) return 'Enter a placement for at least one squad.';
-    const seen = new Set();
-    for (const e of entries) {
-      if (e.placement < 1 || e.placement > t.total_slots) return `Placement must be between 1 and ${t.total_slots} (${e.s.squad_name}).`;
-      if (seen.has(e.placement)) return `Placement #${e.placement} is used twice.`;
-      seen.add(e.placement);
-    }
-    return '';
+  const updateSquad = (squadName, field, value) => {
+    setRows((prev) => ({
+      ...prev,
+      [squadName]: {
+        placement: field === 'placement' ? Number(value) : (prev[squadName]?.placement || 0),
+        kills: field === 'kills' ? Math.max(0, Number(value) || 0) : (prev[squadName]?.kills || 0),
+      },
+    }));
   };
-  const submit = async () => {
+
+  const saveResults = async (markCompleted) => {
+    if (!tid) return;
     setBusy(true);
     try {
-      const n = await call('admin_submit_results', { p_tournament: tid, p_results: entries.map((e) => ({ registration_id: e.s.id, placement: e.placement, kills: e.kills })) });
-      toast.success(`Results saved for ${n} squads. Leaderboard updated.`);
-      setAsk(false); setHad(true); await refresh();
-    } catch (e) { toast.error(errMsg(e)); } finally { setBusy(false); }
+      const payload = Object.entries(rows).map(([squadName, data]) => ({
+        tournament_id: tid,
+        squad_name: squadName,
+        placement: data.placement,
+        kills: data.kills,
+      }));
+
+      await call('admin_save_results', {
+        p_tournament: tid,
+        p_results: payload,
+        p_mark_completed: markCompleted,
+      });
+
+      toast.success(markCompleted ? 'Results saved & match marked COMPLETED!' : 'Draft results saved.');
+      await refresh();
+    } catch (e) {
+      toast.error(errMsg(e));
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
     <div className="space-y-5">
-      <Glass className="p-4"><Field label="Match"><select className={inputCls} value={tid} onChange={(e) => setTid(e.target.value)}><option value="">Select a match…</option>{eligible.map((x) => <option key={x.id} value={x.id}>{x.title} · {fmtDT(x.start_time)} · {x.status}</option>)}</select></Field></Glass>
-      {!t ? <Empty icon={Trophy} title="Pick a match">Choose a match to enter Booyah winner, kills and placements.</Empty>
-        : squads.length === 0 ? <Empty icon={Users} title="No approved squads">Approve registrations first.</Empty> : (
-          <Glass className="overflow-hidden">
-            <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-b border-white/10">
-              <div><h3 className="font-display text-2xl text-[#FFB800] leading-none">RESULT ENTRY</h3><p className="text-xs text-white/45 mt-1">Per kill: {points.kill} pt · {money(t.per_kill_reward)} cash · Leave placement blank for squads that did not play.{had ? ' Existing results will be replaced.' : ''}</p></div>
-              {winner && <Badge tone="gold"><Crown className="w-3 h-3" />Booyah: {winner.s.squad_name}</Badge>}
+      <Glass className="p-5 space-y-4">
+        <Field label="Select match to input results">
+          <select className={inputCls} value={tid} onChange={(e) => setTid(e.target.value)}>
+            <option value="">-- Select a tournament --</option>
+            {eligible.map((t) => (
+              <option key={t.id} value={t.id}>{t.title} ({t.mode} · {t.status})</option>
+            ))}
+          </select>
+        </Field>
+      </Glass>
+
+      {selectedMatch && (
+        <Glass className="p-5 space-y-5">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-3">
+            <div>
+              <h3 className="font-display text-3xl text-white leading-none">{selectedMatch.title}</h3>
+              <p className="text-xs text-white/50 mt-1">{approvedSquads.length} approved squad(s) in this match</p>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm min-w-[560px]">
-                <thead className="text-[11px] uppercase tracking-wider text-white/40 bg-[#07090E]/60"><tr><th className="p-3 text-left">Squad</th><th className="p-3 w-28">Placement</th><th className="p-3 w-28">Kills</th><th className="p-3 text-right">Points</th><th className="p-3 text-right">Kill cash</th></tr></thead>
-                <tbody className="divide-y divide-white/5">
-                  {squads.map((s) => {
-                    const r = rows[s.id] || { placement: '', kills: '' };
-                    const p = r.placement ? calcPoints(r.placement, r.kills, points) : null;
-                    return (
-                      <tr key={s.id}>
-                        <td className="p-3 font-semibold text-white">{s.squad_name}{r.placement === '1' && <Crown className="inline w-4 h-4 text-[#FFB800] ml-1.5" />}</td>
-                        <td className="p-3"><input inputMode="numeric" aria-label={`${s.squad_name} placement`} className={cn(inputCls, 'text-center py-1.5')} value={r.placement} onChange={(e) => setCell(s.id, 'placement', e.target.value)} placeholder="#" /></td>
-                        <td className="p-3"><input inputMode="numeric" aria-label={`${s.squad_name} kills`} className={cn(inputCls, 'text-center py-1.5')} value={r.kills} onChange={(e) => setCell(s.id, 'kills', e.target.value)} placeholder="0" /></td>
-                        <td className="p-3 text-right font-display text-2xl text-[#FFB800]">{p ? p.total : '—'}{p && <span className="block text-[10px] font-body text-white/35 -mt-1">{p.placementPts}+{p.killPts}</span>}</td>
-                        <td className="p-3 text-right text-white/60">{p ? money(Number(r.kills || 0) * t.per_kill_reward) : '—'}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-            <div className="p-4 border-t border-white/10 flex justify-end"><Button onClick={() => { const e = validate(); if (e) toast.error(e); else setAsk(true); }}><Trophy className="w-4 h-4" />Submit results</Button></div>
-          </Glass>
-        )}
-      <ConfirmModal open={ask} busy={busy} tone="emerald" title="PUBLISH RESULTS?" confirmLabel="Publish & update leaderboard" onClose={() => setAsk(false)} onConfirm={submit}
-        message={`${entries.length} squads will be scored, the match is marked COMPLETED, room info is hidden and the global leaderboard is recalculated.`} />
+            <StatusBadge status={selectedMatch.status} />
+          </div>
+
+          {fetching ? (
+            <div className="py-10 text-center text-white/40"><RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2" />Loading results...</div>
+          ) : approvedSquads.length === 0 ? (
+            <Empty icon={Users} title="No approved squads">Approve registrations in the Payments tab before entering results.</Empty>
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm min-w-[550px]">
+                  <thead className="bg-[#07090E]/70 text-white/45 text-[11px] uppercase tracking-wider">
+                    <tr>
+                      <th className="p-3 text-left">Squad</th>
+                      <th className="p-3 text-center w-36">Placement</th>
+                      <th className="p-3 text-center w-32">Kills</th>
+                      <th className="p-3 text-center">Place Pts</th>
+                      <th className="p-3 text-center">Kill Pts</th>
+                      <th className="p-3 text-right">Total Pts</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {approvedSquads.map((s) => {
+                      const squadData = rows[s.squad_name] || { placement: 0, kills: 0 };
+                      const calc = calcPoints(squadData.placement, squadData.kills, points);
+                      return (
+                        <tr key={s.id} className="hover:bg-white/[0.02]">
+                          <td className="p-3 font-bold text-white">{s.squad_name} <span className="text-xs font-normal text-white/40">({s.ign})</span></td>
+                          <td className="p-3">
+                            <select className={cn(inputCls, 'py-1 text-center')} value={squadData.placement} onChange={(e) => updateSquad(s.squad_name, 'placement', e.target.value)}>
+                              <option value={0}>0 (Not Ranked)</option>
+                              {Array.from({ length: 12 }, (_, i) => i + 1).map((n) => (
+                                <option key={n} value={n}>#{n}{n === 1 ? ' · Booyah' : ''}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="p-3">
+                            <input type="number" min="0" max="50" className={cn(inputCls, 'py-1 text-center')} value={squadData.kills} onChange={(e) => updateSquad(s.squad_name, 'kills', e.target.value)} />
+                          </td>
+                          <td className="p-3 text-center font-mono text-white/70">{calc.placementPts}</td>
+                          <td className="p-3 text-center font-mono text-[#EF4444]">{calc.killPts}</td>
+                          <td className="p-3 text-right font-display text-2xl text-[#FFB800]">{calc.total}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="flex flex-wrap gap-3 justify-end pt-3 border-t border-white/10">
+                <Button variant="ghost" loading={busy} onClick={() => saveResults(false)}>Save Draft</Button>
+                <Button variant="gold" loading={busy} onClick={() => saveResults(true)}><Trophy className="w-4 h-4" />Save &amp; Complete Match</Button>
+              </div>
+            </>
+          )}
+        </Glass>
+      )}
     </div>
   );
 }
 
-function NoticesAdmin({ notices, call, refresh }) {
+function AnnouncementsAdmin({ announcements, call, refresh }) {
   const toast = useToast();
-  const blank = { id: '', kind: 'TICKER', title: '', message: '', image_url: '', is_active: true };
-  const [f, setF] = useState(blank);
+  const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
-  const save = async (e) => {
+
+  const add = async (e) => {
     e.preventDefault();
-    if (!f.message.trim()) return toast.error('Write a message first.');
+    if (!msg.trim()) return;
     setBusy(true);
-    try { await call('admin_upsert_notice', { p: { ...f, id: f.id || null } }); toast.success(f.id ? 'Notice updated.' : 'Notice published.'); setF(blank); await refresh(); }
-    catch (e2) { toast.error(errMsg(e2)); } finally { setBusy(false); }
+    try {
+      await call('admin_save_announcement', { p_message: msg.trim() });
+      toast.success('Notice published to ticker!');
+      setMsg('');
+      await refresh();
+    } catch (err) { toast.error(errMsg(err)); } finally { setBusy(false); }
   };
-  const toggle = async (n) => { try { await call('admin_upsert_notice', { p: { ...n, is_active: !n.is_active } }); await refresh(); } catch (e) { toast.error(errMsg(e)); } };
-  const del = async (n) => { try { await call('admin_delete_notice', { p_id: n.id }); toast.success('Notice deleted.'); if (f.id === n.id) setF(blank); await refresh(); } catch (e) { toast.error(errMsg(e)); } };
+
+  const remove = async (id) => {
+    try {
+      await call('admin_delete_announcement', { p_id: id });
+      toast.success('Notice removed');
+      await refresh();
+    } catch (err) { toast.error(errMsg(err)); }
+  };
+
   return (
     <div className="space-y-6">
       <Glass className="p-5">
-        <h3 className="font-display text-2xl text-[#FFB800] flex items-center gap-2 mb-4"><Megaphone className="w-5 h-5" />{f.id ? 'EDIT NOTICE' : 'NEW NOTICE'}</h3>
-        <form onSubmit={save} className="grid gap-3.5 sm:grid-cols-2">
-          <Field label="Placement"><select className={inputCls} value={f.kind} onChange={(e) => setF({ ...f, kind: e.target.value })}><option value="TICKER">Scrolling ticker</option><option value="BANNER">Hero banner (latest active is shown)</option></select></Field>
-          {f.kind === 'BANNER' ? <Field label="Banner headline"><input className={inputCls} maxLength={60} value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} placeholder="SEASON 5 GRAND FINALS" /></Field> : <div />}
-          <Field label="Message" className="sm:col-span-2"><textarea className={cn(inputCls, 'h-20 resize-none')} maxLength={300} value={f.message} onChange={(e) => setF({ ...f, message: e.target.value })} placeholder="Announcement text…" /></Field>
-          {f.kind === 'BANNER' && <Field label="Banner image URL (optional)" className="sm:col-span-2"><input className={inputCls} value={f.image_url} onChange={(e) => setF({ ...f, image_url: e.target.value })} placeholder="https://…" /></Field>}
-          <div className="sm:col-span-2 flex items-center justify-between gap-3">
-            <label className="flex items-center gap-3 text-sm text-white/70"><Switch checked={f.is_active} onChange={(v) => setF({ ...f, is_active: v })} label="Active" />Active</label>
-            <div className="flex gap-2">{f.id && <Button variant="ghost" onClick={() => setF(blank)}>Cancel</Button>}<Button type="submit" loading={busy}><Send className="w-4 h-4" />{f.id ? 'Save' : 'Publish'}</Button></div>
-          </div>
+        <h3 className="font-display text-2xl text-[#FFB800] flex items-center gap-2 mb-3"><Megaphone className="w-5 h-5" />NEW ANNOUNCEMENT</h3>
+        <form onSubmit={add} className="flex gap-3">
+          <input className={inputCls} value={msg} onChange={(e) => setMsg(e.target.value)} placeholder="e.g. Daily Solo tournament starts at 8:00 PM tonight!" maxLength={200} />
+          <Button type="submit" loading={busy} disabled={!msg.trim()}><Megaphone className="w-4 h-4" />Publish</Button>
         </form>
       </Glass>
-      <div className="space-y-2.5">
-        {notices.length === 0 && <Empty icon={Megaphone} title="No notices">Ticker and banner messages will appear here.</Empty>}
-        {notices.map((n) => (
-          <Glass key={n.id} className="p-4 flex flex-wrap items-center gap-3">
-            <Badge tone={n.kind === 'BANNER' ? 'blue' : 'gold'}>{n.kind}</Badge>
-            <div className="flex-1 min-w-[12rem]">{n.title && <p className="font-semibold text-white text-sm">{n.title}</p>}<p className="text-sm text-white/65">{n.message}</p></div>
-            <Switch checked={n.is_active} onChange={() => toggle(n)} label={`Toggle ${n.kind} notice`} />
-            <Button size="sm" variant="ghost" onClick={() => setF({ ...n, title: n.title || '', image_url: n.image_url || '' })}><Pencil className="w-3.5 h-3.5" /></Button>
-            <Button size="sm" variant="crimson" onClick={() => del(n)} aria-label="Delete notice"><Trash2 className="w-3.5 h-3.5" /></Button>
-          </Glass>
-        ))}
+
+      <div className="space-y-3">
+        {announcements.length === 0 ? <Empty icon={Megaphone} title="No announcements">Publish notices above to show them on the scrolling ticker.</Empty>
+          : announcements.map((a) => (
+            <Glass key={a.id} className="p-4 flex items-center justify-between gap-4">
+              <p className="text-sm text-white/80">{a.message}</p>
+              <Button size="sm" variant="crimson" onClick={() => remove(a.id)}><Trash2 className="w-3.5 h-3.5" /></Button>
+            </Glass>
+          ))}
       </div>
     </div>
   );
@@ -1550,309 +1626,288 @@ function NoticesAdmin({ notices, call, refresh }) {
 
 function SettingsAdmin({ settings, call, refresh }) {
   const toast = useToast();
-  const [pay, setPay] = useState(settings.payment);
-  const [sup, setSup] = useState(settings.support);
-  const [kill, setKill] = useState(String(settings.points.kill));
-  const [place, setPlace] = useState(settings.points.placement.join(', '));
-  const [busy, setBusy] = useState('');
-  useEffect(() => { setPay(settings.payment); setSup(settings.support); setKill(String(settings.points.kill)); setPlace(settings.points.placement.join(', ')); }, [settings]);
+  const [pay, setPay] = useState(settings.payment || DEFAULT_PAYMENT);
+  const [sup, setSup] = useState(settings.support || DEFAULT_SUPPORT);
+  const [oldPin, setOldPin] = useState('');
+  const [newPin, setNewPin] = useState('');
+  const [busyPay, setBusyPay] = useState(false);
+  const [busyPin, setBusyPin] = useState(false);
 
-  const save = async (key, value, label) => {
-    setBusy(key);
-    try { await call('admin_set_setting', { p_key: key, p_value: value }); toast.success(`${label} saved.`); await refresh(); }
-    catch (e) { toast.error(errMsg(e)); } finally { setBusy(''); }
+  useEffect(() => {
+    setPay(settings.payment || DEFAULT_PAYMENT);
+    setSup(settings.support || DEFAULT_SUPPORT);
+  }, [settings]);
+
+  const saveSettings = async (e) => {
+    e.preventDefault();
+    setBusyPay(true);
+    try {
+      await call('admin_save_settings', {
+        p_payment: pay,
+        p_support: sup,
+      });
+      toast.success('System settings saved successfully!');
+      await refresh();
+    } catch (err) { toast.error(errMsg(err)); } finally { setBusyPay(false); }
   };
-  const savePoints = () => {
-    const list = place.split(/[,\s]+/).filter(Boolean).map(Number);
-    if (!list.length || list.length > 100 || list.some((n) => !Number.isInteger(n) || n < 0)) return toast.error('Placement points must be whole numbers like 12, 9, 8, 7…');
-    if (!Number.isInteger(Number(kill)) || Number(kill) < 0) return toast.error('Kill points must be a whole number ≥ 0.');
-    save('points', { kill: Number(kill), placement: list }, 'Point system');
+
+  const changePin = async (e) => {
+    e.preventDefault();
+    if (!oldPin || !newPin) return;
+    if (newPin.length < 4) return toast.error('New PIN must be at least 4 characters.');
+    setBusyPin(true);
+    try {
+      await call('admin_change_pin', { p_old_pin: oldPin, p_new_pin: newPin });
+      toast.success('Admin PIN updated!');
+      setOldPin(''); setNewPin('');
+    } catch (err) { toast.error(errMsg(err)); } finally { setBusyPin(false); }
   };
-  const url = (v) => !v || /^https?:\/\//i.test(v);
+
   return (
-    <div className="grid gap-5 lg:grid-cols-2">
-      <Glass className="p-5 space-y-3.5">
-        <h3 className="font-display text-2xl text-[#FFB800] flex items-center gap-2"><Smartphone className="w-5 h-5" />PAYMENT NUMBERS</h3>
-        {METHODS.map((m) => <Field key={m.id} label={`${m.label} (Send Money)`} hint={m.key === 'rocket' ? 'Leave empty to hide this method.' : undefined}><input className={cn(inputCls, 'font-mono')} value={pay[m.key] || ''} onChange={(e) => setPay({ ...pay, [m.key]: e.target.value.replace(/[^\d+]/g, '') })} placeholder="01XXXXXXXXX" /></Field>)}
-        <Button loading={busy === 'payment'} onClick={() => save('payment', pay, 'Payment numbers')}>Save numbers</Button>
+    <div className="space-y-6">
+      <Glass className="p-5">
+        <h3 className="font-display text-2xl text-[#FFB800] flex items-center gap-2 mb-4"><Wallet className="w-5 h-5" />PAYMENT &amp; SUPPORT ACCOUNTS</h3>
+        <form onSubmit={saveSettings} className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Field label="bKash Personal Number"><input className={inputCls} value={pay.bkash || ''} onChange={(e) => setPay({ ...pay, bkash: e.target.value })} placeholder="017XXXXXXXX" /></Field>
+            <Field label="Nagad Personal Number"><input className={inputCls} value={pay.nagad || ''} onChange={(e) => setPay({ ...pay, nagad: e.target.value })} placeholder="018XXXXXXXX" /></Field>
+            <Field label="Rocket Personal Number"><input className={inputCls} value={pay.rocket || ''} onChange={(e) => setPay({ ...pay, rocket: e.target.value })} placeholder="019XXXXXXXX" /></Field>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 pt-2 border-t border-white/10">
+            <Field label="WhatsApp Support Link"><input className={inputCls} value={sup.whatsapp || ''} onChange={(e) => setSup({ ...sup, whatsapp: e.target.value })} placeholder="https://wa.me/88017XXXXXXXX" /></Field>
+            <Field label="Telegram Support Link"><input className={inputCls} value={sup.telegram || ''} onChange={(e) => setSup({ ...sup, telegram: e.target.value })} placeholder="https://t.me/yourusername" /></Field>
+          </div>
+          <div className="flex justify-end pt-2">
+            <Button type="submit" loading={busyPay}><Check className="w-4 h-4" />Save Configuration</Button>
+          </div>
+        </form>
       </Glass>
-      <Glass className="p-5 space-y-3.5">
-        <h3 className="font-display text-2xl text-[#FFB800] flex items-center gap-2"><Headphones className="w-5 h-5" />SUPPORT LINKS</h3>
-        <Field label="WhatsApp link" hint="e.g. https://wa.me/8801XXXXXXXXX"><input className={inputCls} value={sup.whatsapp || ''} onChange={(e) => setSup({ ...sup, whatsapp: e.target.value.trim() })} /></Field>
-        <Field label="Telegram link" hint="e.g. https://t.me/yourchannel"><input className={inputCls} value={sup.telegram || ''} onChange={(e) => setSup({ ...sup, telegram: e.target.value.trim() })} /></Field>
-        <Button loading={busy === 'support'} onClick={() => (url(sup.whatsapp) && url(sup.telegram) ? save('support', sup, 'Support links') : toast.error('Links must start with https://'))}>Save links</Button>
-      </Glass>
-      <Glass className="p-5 space-y-3.5 lg:col-span-2">
-        <h3 className="font-display text-2xl text-[#FFB800] flex items-center gap-2"><Medal className="w-5 h-5" />POINT SYSTEM</h3>
-        <div className="grid gap-3.5 sm:grid-cols-3">
-          <Field label="Points per kill"><input type="number" min="0" className={inputCls} value={kill} onChange={(e) => setKill(e.target.value)} /></Field>
-          <Field label="Placement points (rank 1, 2, 3…)" className="sm:col-span-2"><input className={inputCls} value={place} onChange={(e) => setPlace(e.target.value)} /></Field>
-        </div>
-        <p className="text-[11px] text-white/40">Applies to results submitted from now on. Re-submit a match's results to re-score it.</p>
-        <Button loading={busy === 'points'} onClick={savePoints}>Save point system</Button>
+
+      <Glass className="p-5">
+        <h3 className="font-display text-2xl text-[#EF4444] flex items-center gap-2 mb-4"><Lock className="w-5 h-5" />CHANGE ADMIN PIN</h3>
+        <form onSubmit={changePin} className="grid gap-3 sm:grid-cols-3 items-end">
+          <Field label="Current PIN"><input type="password" className={inputCls} value={oldPin} onChange={(e) => setOldPin(e.target.value)} placeholder="••••" /></Field>
+          <Field label="New Security PIN"><input type="password" className={inputCls} value={newPin} onChange={(e) => setNewPin(e.target.value)} placeholder="••••" /></Field>
+          <Button type="submit" variant="crimson" loading={busyPin} disabled={!oldPin || !newPin}><Key className="w-4 h-4" />Update Security PIN</Button>
+        </form>
       </Glass>
     </div>
   );
 }
 
-const ADMIN_TABS = [
-  { id: 'matches', label: 'Matches', icon: Gamepad2 },
-  { id: 'payments', label: 'Payments', icon: Wallet },
-  { id: 'rooms', label: 'Rooms', icon: Key },
-  { id: 'results', label: 'Results', icon: Trophy },
-  { id: 'notices', label: 'Notices', icon: Megaphone },
-  { id: 'settings', label: 'Settings', icon: Settings },
-];
-
-function AdminPanel({ token, onLock, tournaments, tVersion, settings, reloadPublic }) {
-  const toast = useToast();
+function AdminPanel({ tournaments, regs, rooms, announcements, settings, points, refresh }) {
+  const [token, setToken] = useState(() => safeStore.get(ADMIN_TOKEN_KEY));
   const [tab, setTab] = useState('matches');
-  const [regs, setRegs] = useState([]);
-  const [rooms, setRooms] = useState([]);
-  const [notices, setNotices] = useState([]);
 
-  const call = useCallback(async (fn, args = {}) => {
-    const { data, error } = await supabase.rpc(fn, { p_token: token, ...args });
-    if (error) { if (/session expired/i.test(error.message)) onLock(true); throw error; }
+  const onUnlocked = (tok) => {
+    safeStore.set(ADMIN_TOKEN_KEY, tok);
+    setToken(tok);
+  };
+
+  const logout = () => {
+    safeStore.del(ADMIN_TOKEN_KEY);
+    setToken(null);
+  };
+
+  const callAdminRpc = useCallback(async (fnName, params = {}) => {
+    const { data, error } = await supabase.rpc(fnName, { ...params, p_token: token });
+    if (error) throw error;
     return data;
-  }, [token, onLock]);
-  const callRef = useRef(call);
-  callRef.current = call;
+  }, [token]);
 
-  const loadAdmin = useCallback(async () => {
-    const [r, rm, n] = await Promise.all([callRef.current('admin_list_registrations'), callRef.current('admin_list_rooms'), callRef.current('admin_list_notices')]);
-    setRegs(r || []); setRooms(rm || []); setNotices(n || []);
-  }, []);
-  const refresh = useCallback(async () => { await Promise.all([loadAdmin(), reloadPublic()]); }, [loadAdmin, reloadPublic]);
+  if (!token) return <AdminGate onUnlocked={onUnlocked} />;
 
-  useEffect(() => { loadAdmin().catch((e) => toast.error(errMsg(e))); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [tVersion]);
-  useEffect(() => { const i = setInterval(() => loadAdmin().catch(() => {}), 10000); return () => clearInterval(i); }, [loadAdmin]);
+  const pendingCount = regs.filter((r) => r.status === 'PENDING').length;
 
-  const pending = regs.filter((r) => r.status === 'PENDING').length;
   return (
-    <div>
-      <SectionTitle icon={Shield} right={(
-        <div className="flex gap-2">
-          <Button size="sm" variant="ghost" onClick={() => loadAdmin().then(() => toast.info('Admin data refreshed.')).catch((e) => toast.error(errMsg(e)))}><RefreshCw className="w-3.5 h-3.5" />Refresh</Button>
-          <Button size="sm" variant="ghost" onClick={() => onLock(false)}><LogOut className="w-3.5 h-3.5" />Lock</Button>
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 pb-4">
+        <div className="flex items-center gap-3">
+          <ShieldCheck className="w-8 h-8 text-[#EF4444]" />
+          <div>
+            <h2 className="font-display text-4xl text-white leading-none">ADMIN CONTROL CENTER</h2>
+            <p className="text-xs text-white/50">Manage matches, registrations, room passwords, and standings</p>
+          </div>
         </div>
-      )}><span className="text-[#EF4444]">ADMIN CONTROL CENTER</span></SectionTitle>
-      <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-3 mb-4 -mx-4 px-4">
-        {ADMIN_TABS.map(({ id, label, icon: I }) => (
-          <button key={id} onClick={() => setTab(id)} aria-pressed={tab === id}
-            className={cn('relative shrink-0 flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold uppercase tracking-wider border transition',
-              tab === id ? 'bg-[#FFB800] border-[#FFB800] text-black' : 'border-white/10 bg-white/5 text-white/60 hover:text-white')}>
-            <I className="w-4 h-4" />{label}
-            {id === 'payments' && pending > 0 && <span className="min-w-5 h-5 px-1 rounded-full bg-[#EF4444] text-white text-[10px] grid place-items-center">{pending}</span>}
+        <Button variant="ghost" size="sm" onClick={logout}><LogOut className="w-4 h-4" />Lock Panel</Button>
+      </div>
+
+      <div className="flex flex-wrap gap-2 border-b border-white/10 pb-3">
+        {[
+          { id: 'matches', label: 'Matches', icon: Gamepad2 },
+          { id: 'payments', label: `Payments (${pendingCount})`, icon: Wallet, badge: pendingCount },
+          { id: 'rooms', label: 'Rooms', icon: Key },
+          { id: 'results', label: 'Results', icon: Trophy },
+          { id: 'notices', label: 'Notices', icon: Megaphone },
+          { id: 'settings', label: 'Settings', icon: Settings },
+        ].map((t) => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            className={cn('flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold uppercase tracking-wider transition',
+              tab === t.id ? 'bg-[#EF4444] text-white shadow-[0_0_20px_rgba(239,68,68,.3)]' : 'bg-white/5 text-white/60 hover:text-white hover:bg-white/10')}>
+            <t.icon className="w-4 h-4" />{t.label}
           </button>
         ))}
       </div>
-      {tab === 'matches' && <MatchesAdmin tournaments={tournaments} call={call} refresh={refresh} />}
-      {tab === 'payments' && <PaymentsAdmin tournaments={tournaments} regs={regs} call={call} refresh={refresh} />}
-      {tab === 'rooms' && <RoomsAdmin tournaments={tournaments} regs={regs} rooms={rooms} call={call} refresh={refresh} />}
-      {tab === 'results' && <ResultsAdmin tournaments={tournaments} regs={regs} points={settings.points} call={call} refresh={refresh} />}
-      {tab === 'notices' && <NoticesAdmin notices={notices} call={call} refresh={refresh} />}
-      {tab === 'settings' && <SettingsAdmin settings={settings} call={call} refresh={refresh} />}
+
+      {tab === 'matches' && <MatchesAdmin tournaments={tournaments} call={callAdminRpc} refresh={refresh} />}
+      {tab === 'payments' && <PaymentsAdmin tournaments={tournaments} regs={regs} call={callAdminRpc} refresh={refresh} />}
+      {tab === 'rooms' && <RoomsAdmin tournaments={tournaments} regs={regs} rooms={rooms} call={callAdminRpc} refresh={refresh} />}
+      {tab === 'results' && <ResultsAdmin tournaments={tournaments} regs={regs} points={points} call={callAdminRpc} refresh={refresh} />}
+      {tab === 'notices' && <AnnouncementsAdmin announcements={announcements} call={callAdminRpc} refresh={refresh} />}
+      {tab === 'settings' && <SettingsAdmin settings={settings} call={callAdminRpc} refresh={refresh} />}
     </div>
   );
 }
 
-function Admin(props) {
-  const toast = useToast();
-  const [token, setToken] = useState(() => safeStore.get(ADMIN_TOKEN_KEY) || '');
-  const [checking, setChecking] = useState(!!safeStore.get(ADMIN_TOKEN_KEY));
+/* ───────────────────────── MAIN APP ───────────────────────── */
 
-  useEffect(() => {
-    if (!token || !checking) return;
-    let alive = true;
-    supabase.rpc('admin_check', { p_token: token }).then(({ data }) => {
-      if (!alive) return;
-      if (!data) { safeStore.del(ADMIN_TOKEN_KEY); setToken(''); }
-      setChecking(false);
-    });
-    return () => { alive = false; };
-  }, [token, checking]);
-
-  const unlock = (t) => { safeStore.set(ADMIN_TOKEN_KEY, t); setToken(t); setChecking(false); };
-  const lock = useCallback((expired) => {
-    const old = safeStore.get(ADMIN_TOKEN_KEY);
-    safeStore.del(ADMIN_TOKEN_KEY); setToken('');
-    if (old && !expired) supabase.rpc('admin_logout', { p_token: old }).then(() => {}, () => {});
-    if (expired) toast.error('Admin session expired. Enter the PIN again.');
-  }, [toast]);
-
-  if (checking) return <div className="py-24 text-center text-[#FFB800] font-display text-3xl animate-pulse">VERIFYING SESSION…</div>;
-  if (!token) return <AdminGate onUnlocked={unlock} />;
-  return <AdminPanel token={token} onLock={lock} {...props} />;
-}
-
-/* ───────────────────────── APP SHELL ───────────────────────── */
-
-function Shell() {
+function BooyahArena() {
   const toast = useToast();
   const [tab, setTab] = useState('lobby');
-  const [userId, setUserId] = useState(null);
-  const [authError, setAuthError] = useState('');
+  const [user, setUser] = useState(null);
+  const [userReady, setUserReady] = useState(false);
   const [tournaments, setTournaments] = useState([]);
-  const [notices, setNotices] = useState([]);
-  const [board, setBoard] = useState([]);
-  const [settings, setSettings] = useState({ points: DEFAULT_POINTS, payment: DEFAULT_PAYMENT, support: DEFAULT_SUPPORT });
   const [myRegs, setMyRegs] = useState([]);
+  const [allRegs, setAllRegs] = useState([]);
   const [rooms, setRooms] = useState([]);
+  const [standings, setStandings] = useState([]);
+  const [announcements, setAnnouncements] = useState([]);
+  const [settings, setSettings] = useState({ payment: DEFAULT_PAYMENT, support: DEFAULT_SUPPORT });
+  const [points, setPoints] = useState(DEFAULT_POINTS);
   const [loading, setLoading] = useState(true);
   const [live, setLive] = useState(false);
-  const [tVersion, setTVersion] = useState(0);
-  const [joining, setJoining] = useState(null);
+  const [joinModal, setJoinModal] = useState(null);
 
-  /* ── loaders ── */
-  const loadTournaments = useCallback(async () => {
-    const { data, error } = await supabase.from('tournaments').select('*').order('start_time', { ascending: true });
-    if (error) throw error;
-    setTournaments(data || []); setTVersion((v) => v + 1);
-  }, []);
-  const loadNotices = useCallback(async () => {
-    const { data, error } = await supabase.from('notices').select('*').order('created_at', { ascending: false });
-    if (error) throw error;
-    setNotices(data || []);
-  }, []);
-  const loadBoard = useCallback(async () => {
-    const { data, error } = await supabase.from('leaderboard').select('*').order('total_points', { ascending: false });
-    if (error) throw error;
-    setBoard(data || []);
-  }, []);
-  const loadSettings = useCallback(async () => {
-    const { data, error } = await supabase.from('settings').select('*');
-    if (error) throw error;
-    const m = Object.fromEntries((data || []).map((r) => [r.key, r.value]));
-    setSettings({
-      points: { ...DEFAULT_POINTS, ...(m.points || {}), placement: Array.isArray(m.points?.placement) ? m.points.placement : DEFAULT_POINTS.placement },
-      payment: { ...DEFAULT_PAYMENT, ...(m.payment || {}) },
-      support: { ...DEFAULT_SUPPORT, ...(m.support || {}) },
-    });
-  }, []);
-  const loadMine = useCallback(async () => {
-    const [r, rm] = await Promise.all([
-      supabase.from('registrations').select('*').order('created_at', { ascending: false }),
-      supabase.from('room_credentials').select('*'),
-    ]);
-    if (r.error) throw r.error;
-    if (rm.error) throw rm.error;
-    setMyRegs(r.data || []); setRooms(rm.data || []);
-  }, []);
-  const loadPublic = useCallback(() => Promise.all([loadTournaments(), loadNotices(), loadBoard(), loadSettings()]), [loadTournaments, loadNotices, loadBoard, loadSettings]);
-  const reloadAll = useCallback(async () => {
-    try { await Promise.all([loadPublic(), loadMine()]); } catch (e) { toast.error(errMsg(e)); }
-  }, [loadPublic, loadMine, toast]);
-
-  /* ── anonymous player session ── */
+  // Authenticate player session anonymously
   useEffect(() => {
-    let alive = true;
+    if (!supabase) return;
     (async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        let s = session;
-        if (!s) {
+        let { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
           const { data, error } = await supabase.auth.signInAnonymously();
-          if (error) throw error;
-          s = data.session;
+          if (!error && data) session = data.session;
         }
-        if (alive) setUserId(s?.user?.id || null);
+        setUser(session?.user || null);
       } catch (e) {
-        if (alive) setAuthError(errMsg(e));
+        console.warn('Anon auth warning', e);
+      } finally {
+        setUserReady(true);
       }
     })();
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => { if (alive) setUserId(s?.user?.id || null); });
-    return () => { alive = false; sub.subscription.unsubscribe(); };
   }, []);
 
-  /* ── first load ── */
-  useEffect(() => {
-    loadPublic().catch((e) => toast.error(`Could not load data: ${errMsg(e)}`)).finally(() => setLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  useEffect(() => { if (userId) loadMine().catch((e) => toast.error(errMsg(e))); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [userId]);
+  // Fetch all public database states
+  const fetchData = useCallback(async () => {
+    if (!supabase) return;
+    try {
+      const [tRes, rRes, rmRes, stRes, anRes, setRes] = await Promise.all([
+        supabase.from('tournaments').select('*'),
+        supabase.from('registrations').select('*'),
+        supabase.from('tournament_rooms').select('*'),
+        supabase.from('standings').select('*'),
+        supabase.from('announcements').select('*'),
+        supabase.from('system_settings').select('*'),
+      ]);
 
-  /* ── realtime + safety-net polling ── */
+      if (tRes.data) setTournaments(tRes.data);
+      if (rRes.data) {
+        setAllRegs(rRes.data);
+        if (user) setMyRegs(rRes.data.filter((r) => r.user_id === user.id));
+      }
+      if (rmRes.data) setRooms(rmRes.data);
+      if (stRes.data) setStandings(stRes.data);
+      if (anRes.data) setAnnouncements(anRes.data);
+      if (setRes.data) {
+        const pay = setRes.data.find((s) => s.key === 'payment')?.value || DEFAULT_PAYMENT;
+        const sup = setRes.data.find((s) => s.key === 'support')?.value || DEFAULT_SUPPORT;
+        const pts = setRes.data.find((s) => s.key === 'points')?.value || DEFAULT_POINTS;
+        setSettings({ payment: pay, support: sup });
+        setPoints(pts);
+      }
+    } catch (e) {
+      console.error('Data fetch error', e);
+    } finally {
+      setLoading(false);
+    }
+  }, [user]);
+
   useEffect(() => {
-    const timers = {};
-    const deb = (k, fn) => { clearTimeout(timers[k]); timers[k] = setTimeout(() => fn().catch(() => {}), 250); };
-    const ch = supabase.channel(`arena-${userId || 'guest'}`);
-    const on = (table, fn) => ch.on('postgres_changes', { event: '*', schema: 'public', table }, () => deb(table, fn));
-    on('tournaments', loadTournaments); on('notices', loadNotices); on('leaderboard', loadBoard);
-    on('settings', loadSettings); on('registrations', loadMine); on('room_credentials', loadMine);
-    ch.subscribe((s) => setLive(s === 'SUBSCRIBED'));
-    const poll = setInterval(() => { loadPublic().catch(() => {}); if (userId) loadMine().catch(() => {}); }, 30000);
-    const onVis = () => { if (document.visibilityState === 'visible') { loadPublic().catch(() => {}); if (userId) loadMine().catch(() => {}); } };
-    document.addEventListener('visibilitychange', onVis);
+    if (userReady) fetchData();
+  }, [userReady, fetchData]);
+
+  // Set up Realtime channel with fallback interval
+  useEffect(() => {
+    if (!supabase) return;
+    const channel = supabase.channel('ba-public')
+      .on('postgres_changes', { event: '*', schema: 'public' }, () => {
+        fetchData();
+      })
+      .subscribe((status) => {
+        setLive(status === 'SUBSCRIBED');
+      });
+
+    const interval = setInterval(fetchData, 30000);
     return () => {
-      Object.values(timers).forEach(clearTimeout); clearInterval(poll);
-      document.removeEventListener('visibilitychange', onVis); supabase.removeChannel(ch);
+      supabase.removeChannel(channel);
+      clearInterval(interval);
     };
-  }, [userId, loadTournaments, loadNotices, loadBoard, loadSettings, loadMine, loadPublic]);
+  }, [fetchData]);
 
-  /* room window opens → refetch so the credentials appear without a reload */
-  useEffect(() => {
-    const approved = myRegs.filter((r) => r.status === 'APPROVED');
-    if (!approved.length) return undefined;
-    const i = setInterval(() => loadMine().catch(() => {}), 20000);
-    return () => clearInterval(i);
-  }, [myRegs, loadMine]);
-
-  /* ── derived ── */
   const regByTournament = useMemo(() => {
-    const m = {};
-    myRegs.forEach((r) => { if (!m[r.tournament_id] || (m[r.tournament_id].status === 'REJECTED' && r.status !== 'REJECTED')) m[r.tournament_id] = r; });
-    return m;
+    return Object.fromEntries(myRegs.map((r) => [r.tournament_id, r]));
   }, [myRegs]);
-  const banner = useMemo(() => notices.find((n) => n.kind === 'BANNER'), [notices]);
-  const tickers = useMemo(() => notices.filter((n) => n.kind === 'TICKER'), [notices]);
-  const readyRooms = rooms.length;
 
-  const startJoin = (t) => {
-    if (!userId) { toast.error(authError ? `Player session unavailable: ${authError}` : 'Starting your player session… try again in a moment.'); return; }
-    setJoining(t);
-  };
+  const readyRoomsCount = useMemo(() => {
+    const now = Date.now();
+    return myRegs.filter((r) => {
+      if (r.status !== 'APPROVED') return false;
+      const t = tournaments.find((x) => x.id === r.tournament_id);
+      if (!t || t.status !== 'UPCOMING') return false;
+      const unlockAt = new Date(t.start_time).getTime() - ROOM_WINDOW_MIN * 60000;
+      return now >= unlockAt;
+    }).length;
+  }, [myRegs, tournaments]);
+
+  if (!supabase) return <SetupScreen />;
 
   return (
-    <div className="ba-root min-h-screen bg-[#07090E] text-gray-100 pb-28 md:pb-12 relative">
+    <div className="min-h-screen bg-[#07090E] text-white ba-root pb-20 md:pb-10 selection:bg-[#FFB800] selection:text-black">
       <GlobalStyle />
-      <Header tab={tab} setTab={setTab} live={live} readyRooms={readyRooms} />
-      <Ticker items={tickers} />
-      {tab === 'lobby' && <Hero banner={banner} tournaments={tournaments} onCta={() => document.getElementById('lobby-anchor')?.scrollIntoView({ behavior: 'smooth' })} />}
+      <Ticker items={announcements} />
+      <Header tab={tab} setTab={setTab} live={live} readyRooms={readyRoomsCount} />
 
-      <main id="lobby-anchor" className="max-w-7xl mx-auto px-4 mt-8 scroll-mt-20">
-        {authError && tab !== 'admin' && (
-          <div role="alert" className="mb-6 flex gap-3 items-start rounded-xl border border-[#EF4444]/40 bg-[#EF4444]/10 px-4 py-3 text-sm text-[#fca5a5]">
-            <AlertTriangle className="w-5 h-5 shrink-0" />
-            <p><b>Player session failed:</b> {authError}. Enable <i>Authentication → Providers → Anonymous sign-ins</i> in Supabase, then refresh. You can still browse matches.</p>
-          </div>
-        )}
-        {tab === 'lobby' && <Lobby tournaments={tournaments} loading={loading} regByTournament={regByTournament} onJoin={startJoin} onRefresh={() => reloadAll().then(() => toast.info('Lobby refreshed.'))} />}
-        {tab === 'slots' && <MySlots myRegs={myRegs} tournaments={tournaments} rooms={rooms} userReady={!!userId} />}
-        {tab === 'standings' && <Leaderboard board={board} points={settings.points} tournaments={tournaments} />}
-        {tab === 'support' && <RulesSupport points={settings.points} support={settings.support} />}
-        {tab === 'admin' && <Admin tournaments={tournaments} tVersion={tVersion} settings={settings} reloadPublic={loadPublic} />}
-      </main>
+      {tab === 'lobby' && (
+        <>
+          <Hero banner={announcements[0]} tournaments={tournaments} onCta={() => window.scrollTo({ top: 600, behavior: 'smooth' })} />
+          <main className="max-w-7xl mx-auto px-4 py-8">
+            <Lobby tournaments={tournaments} loading={loading} regByTournament={regByTournament} onJoin={(t) => setJoinModal(t)} onRefresh={fetchData} />
+          </main>
+        </>
+      )}
 
-      <footer className="max-w-7xl mx-auto px-4 mt-16 text-center text-[11px] text-white/30">
-        © {new Date().getFullYear()} Booyah Arena · Fan-run custom-room tournaments. Not affiliated with Garena or Free Fire.
-      </footer>
+      {tab !== 'lobby' && (
+        <main className="max-w-7xl mx-auto px-4 py-8">
+          {tab === 'slots' && <MySlots myRegs={myRegs} tournaments={tournaments} rooms={rooms} userReady={userReady} />}
+          {tab === 'standings' && <Leaderboard board={standings} points={points} tournaments={tournaments} />}
+          {tab === 'support' && <RulesSupport points={points} support={settings.support} />}
+          {tab === 'admin' && <AdminPanel tournaments={tournaments} regs={allRegs} rooms={rooms} announcements={announcements} settings={settings} points={points} refresh={fetchData} />}
+        </main>
+      )}
 
-      <BottomBar tab={tab} setTab={setTab} readyRooms={readyRooms} />
+      <BottomBar tab={tab} setTab={setTab} readyRooms={readyRoomsCount} />
 
-      {joining && (
-        <RegisterModal t={joining} settings={settings} userId={userId} onClose={() => setJoining(null)}
-          onDone={async () => { setJoining(null); setTab('slots'); await reloadAll(); }} />
+      {joinModal && (
+        <RegisterModal t={joinModal} settings={settings} userId={user?.id} onClose={() => setJoinModal(null)} onDone={() => { setJoinModal(null); fetchData(); setTab('slots'); }} />
       )}
     </div>
   );
 }
 
 export default function App() {
-  if (!supabase) return <><GlobalStyle /><SetupScreen /></>;
   return (
     <ToastProvider>
-      <Shell />
+      <BooyahArena />
     </ToastProvider>
   );
 }
